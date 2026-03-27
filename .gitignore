@@ -1,0 +1,22 @@
+# Environment
+.env
+
+# Bot data files
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+venn/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bot log
+bot.log
