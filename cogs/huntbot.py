@@ -201,6 +201,54 @@ class Huntbot(commands.Cog):
             save_prefs(prefs)
             await interaction.response.send_message("🔕 Huntbot reminders **disabled**.", ephemeral=True)
 
+    # ── /huntbotstatus ────────────────────────────────────
+    @app_commands.command(name="huntbotstatus", description="See who has opted in or out of huntbot reminders")
+    async def huntbotstatus(self, interaction: discord.Interaction):
+        from utils import owner_only as _owner_only
+        try:
+            _owner_only(interaction)
+        except Exception:
+            await interaction.response.send_message("❌ Only the bot owner can use this command.", ephemeral=True)
+            return
+
+        prefs = load_prefs()
+        guild = interaction.guild
+
+        opted_in = []
+        opted_out = []
+        muted = []
+
+        for uid, pref in prefs.items():
+            member = guild.get_member(int(uid)) if guild else None
+            name = member.display_name if member else f"<@{uid}>"
+            if isinstance(pref, dict):
+                if pref.get("muted"):
+                    muted.append(f"{name} — 🔕 muted")
+                elif pref.get("enabled"):
+                    mode = pref.get("mode", "dm")
+                    mode_label = {"dm": "📩 DM", "ping": "📣 ping", "both": "📩📣 both"}.get(mode, mode)
+                    opted_in.append(f"{name} — {mode_label}")
+                else:
+                    opted_out.append(name)
+
+        embed = discord.Embed(title="⏰ Huntbot Reminder Status", color=discord.Color.blurple())
+        embed.add_field(
+            name=f"✅ Opted In ({len(opted_in)})",
+            value="\n".join(opted_in) or "None",
+            inline=False
+        )
+        embed.add_field(
+            name=f"❌ Opted Out ({len(opted_out)})",
+            value="\n".join(opted_out) or "None",
+            inline=False
+        )
+        embed.add_field(
+            name=f"🔕 Muted ({len(muted)})",
+            value="\n".join(muted) or "None",
+            inline=False
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     # ── on_raw_reaction_add ──────────────────────────────
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
