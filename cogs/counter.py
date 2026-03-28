@@ -1,18 +1,20 @@
 import discord
+from discord import app_commands
+from discord.ext import commands
+from utils import owner_only
+
+logger = logging.getLogger("cogs.counter")
 import json
 import os
 import re
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from discord import app_commands
-from discord.ext import commands
-from utils import owner_only
-
-logger = logging.getLogger("cogs.counter")
 
 DATA_FILE  = "counts.json"
-WORDS_FILE = "words.json"
+WORDS_FILE   = "words.json"
+PAUSED_FILE    = "paused.json"
+SERVER_FILE    = "server_settings.json"
 
 # words.json structure:
 # {
@@ -40,6 +42,27 @@ def load_data() -> dict:
 def save_data(data: dict):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+def load_paused() -> set:
+    if os.path.exists(PAUSED_FILE):
+        with open(PAUSED_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+def save_paused(paused: set):
+    with open(PAUSED_FILE, "w") as f:
+        json.dump(list(paused), f)
+
+def load_server_settings() -> dict:
+    """{ "paused": bool, "blacklisted_channels": [channel_id, ...] }"""
+    if os.path.exists(SERVER_FILE):
+        with open(SERVER_FILE, "r") as f:
+            return json.load(f)
+    return {"paused": False, "blacklisted_channels": []}
+
+def save_server_settings(settings: dict):
+    with open(SERVER_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
 
 def get_today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -85,6 +108,16 @@ class Counter(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
+            return
+        # Server-level checks
+        settings = load_server_settings()
+        if settings.get("paused"):
+            return
+        if message.channel.id in settings.get("blacklisted_channels", []):
+            return
+        # Individual pause check
+        paused = load_paused()
+        if str(message.author.id) in paused:
             return
         words = load_words()
         if not words:
@@ -482,6 +515,83 @@ class Counter(commands.Cog):
         view = PaginationView(ctx.author.id)
         msg = await ctx.send(embed=pages[0], view=view)
         view.msg = msg
+
+    # ── /pausetracking ────────────────────────────────────
+    @app_commands.command(name="pausetracking", description="Pause or resume word tracking for yourself")
+    @app_commands.describe(action="Pause or resume tracking")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="pause",  value="pause"),
+        app_commands.Choice(name="resume", value="resume"),
+    ])
+    async def pausetracking(self, interaction: discord.Interaction, action: str):
+        paused = load_paused()
+        uid = str(interaction.user.id)
+        if action == "pause":
+            paused.add(uid)
+            save_paused(paused)
+            await interaction.response.send_message("⏸️ Word tracking **paused** for you. Your messages won't be counted.", ephemeral=True)
+        else:
+            paused.discard(uid)
+            save_paused(paused)
+            await interaction.response.send_message("▶️ Word tracking **resumed**. Your messages will be counted again.", ephemeral=True)
+
+    # ── /servertracking ───────────────────────────────────
+    @app_commands.check(owner_only)
+    @app_commands.command(name="servertracking", description="Pause or resume tracking for the entire server")
+    @app_commands.describe(action="Pause or resume server-wide tracking")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="pause",  value="pause"),
+        app_commands.Choice(name="resume", value="resume"),
+    ])
+    async def servertracking(self, interaction: discord.Interaction, action: str):
+        settings = load_server_settings()
+        if action == "pause":
+            settings["paused"] = True
+            save_server_settings(settings)
+            await interaction.response.send_message("⏸️ Server-wide tracking **paused**. No messages will be counted.", ephemeral=True)
+        else:
+            settings["paused"] = False
+            save_server_settings(settings)
+            await interaction.response.send_message("▶️ Server-wide tracking **resumed**.", ephemeral=True)
+
+    # ── /blacklistchannel ─────────────────────────────────
+    @app_commands.check(owner_only)
+    @app_commands.command(name="blacklistchannel", description="Add or remove a channel from the tracking blacklist")
+    @app_commands.describe(channel="The channel to blacklist or unblacklist", action="Add or remove from blacklist")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="add",    value="add"),
+        app_commands.Choice(name="remove", value="remove"),
+    ])
+    async def blacklistchannel(self, interaction: discord.Interaction, channel: discord.TextChannel, action: str):
+        settings = load_server_settings()
+        bl = settings.setdefault("blacklisted_channels", [])
+        if action == "add":
+            if channel.id in bl:
+                await interaction.response.send_message(f"⚠️ {channel.mention} is already blacklisted.", ephemeral=True)
+                return
+            bl.append(channel.id)
+            save_server_settings(settings)
+            await interaction.response.send_message(f"🚫 {channel.mention} added to blacklist. Tracking disabled there.", ephemeral=True)
+        else:
+            if channel.id not in bl:
+                await interaction.response.send_message(f"⚠️ {channel.mention} is not blacklisted.", ephemeral=True)
+                return
+            bl.remove(channel.id)
+            save_server_settings(settings)
+            await interaction.response.send_message(f"✅ {channel.mention} removed from blacklist.", ephemeral=True)
+
+    # ── /listblacklist ────────────────────────────────────
+    @app_commands.check(owner_only)
+    @app_commands.command(name="listblacklist", description="Show all blacklisted channels and server tracking status")
+    async def listblacklist(self, interaction: discord.Interaction):
+        settings = load_server_settings()
+        bl = settings.get("blacklisted_channels", [])
+        status = "⏸️ Paused" if settings.get("paused") else "▶️ Active"
+        channels = "\n".join(f"<#{cid}>" for cid in bl) if bl else "None"
+        embed = discord.Embed(title="📋 Tracking Settings", color=discord.Color.blurple())
+        embed.add_field(name="Server Tracking", value=status, inline=False)
+        embed.add_field(name="Blacklisted Channels", value=channels, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CheckFailure):

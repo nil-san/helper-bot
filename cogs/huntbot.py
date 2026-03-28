@@ -117,38 +117,29 @@ class PromptView(discord.ui.View):
             child.disabled = True
 
 
-# ── Alarm reaction view ───────────────────────────────────
-class AlarmView(discord.ui.View):
-    def __init__(self, fire_at: float):
-        super().__init__(timeout=None)  # persistent until bot restart
-        self.fire_at = fire_at
-
-    @discord.ui.button(emoji="⏰", style=discord.ButtonStyle.secondary)
-    async def alarm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            f"⏰ Huntbot returns at <t:{int(self.fire_at)}:T> (<t:{int(self.fire_at)}:R>)",
-            ephemeral=True
-        )
-
-
 # ── Cog ───────────────────────────────────────────────────
 class Huntbot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._pending_reactions: dict[int, float] = {}  # message_id → fire_at
+        self._active_reminders: set[int] = set()        # user_ids with an active task
 
     async def cog_load(self):
         reminders = load_reminders()
         if reminders:
             print(f"⏰ Rescheduling {len(reminders)} huntbot reminder(s)...")
         for r in reminders:
-            self.bot.loop.create_task(self._send_reminder(
-                user_id=r["user_id"],
-                guild_id=r["guild_id"],
-                channel_id=r["channel_id"],
-                fire_at=r["fire_at"],
-                guild_name=r["guild_name"],
-                mode=r.get("mode", "dm"),
-            ))
+            uid = r["user_id"]
+            if uid not in self._active_reminders:
+                self._active_reminders.add(uid)
+                self.bot.loop.create_task(self._send_reminder(
+                    user_id=uid,
+                    guild_id=r["guild_id"],
+                    channel_id=r["channel_id"],
+                    fire_at=r["fire_at"],
+                    guild_name=r["guild_name"],
+                    mode=r.get("mode", "dm"),
+                ))
 
     async def _send_reminder(self, user_id: int, guild_id: int, channel_id: int, fire_at: float, guild_name: str, mode: str = "dm"):
         remaining = fire_at - time.time()
@@ -156,6 +147,7 @@ class Huntbot(commands.Cog):
             await asyncio.sleep(remaining)
 
         remove_reminder(user_id)
+        self._active_reminders.discard(user_id)
         logger.info(f"Firing huntbot reminder for user {user_id} in {guild_name}")
 
         user = self.bot.get_user(user_id)
@@ -208,6 +200,26 @@ class Huntbot(commands.Cog):
             prefs.pop(uid, None)
             save_prefs(prefs)
             await interaction.response.send_message("🔕 Huntbot reminders **disabled**.", ephemeral=True)
+
+    # ── on_raw_reaction_add ──────────────────────────────
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        if str(payload.emoji) != "⏰":
+            return
+        if payload.user_id == self.bot.user.id:
+            return
+        fire_at = self._pending_reactions.get(payload.message_id)
+        if fire_at is None:
+            return
+        user = self.bot.get_user(payload.user_id)
+        if user is None:
+            return
+        try:
+            await user.send(
+                f"⏰ That huntbot returns at <t:{int(fire_at)}:T> (<t:{int(fire_at)}:R>)"
+            )
+        except discord.Forbidden:
+            pass
 
     # ── on_message ────────────────────────────────────────
     @commands.Cog.listener()
@@ -265,18 +277,10 @@ class Huntbot(commands.Cog):
                     owner_member = m
                     break
 
-        # React with alarm on the message
+        # React with alarm — store fire_at so on_reaction_add can look it up
+        self._pending_reactions[message.id] = fire_at
         try:
             await message.add_reaction("⏰")
-        except discord.Forbidden:
-            pass
-
-        # Send alarm view so anyone can click to see when it's back
-        try:
-            await message.channel.send(
-                f"⏰ Huntbot detected! Returns <t:{int(fire_at)}:R> (<t:{int(fire_at)}:T>)",
-                view=AlarmView(fire_at)
-            )
         except discord.Forbidden:
             pass
 
@@ -302,14 +306,8 @@ class Huntbot(commands.Cog):
             save_reminders(reminders)
             logger.info(f"Reminder set for {owner_member} (id={owner_member.id}), fires at {fire_at}")
 
-            try:
-                await message.channel.send(
-                    f"✅ {owner_member.mention} I'll remind you at <t:{int(fire_at)}:T> (<t:{int(fire_at)}:R>).",
-                    delete_after=15
-                )
-            except discord.Forbidden:
-                pass
-
+            # Cancel previous task by clearing from active set — new task replaces it
+            self._active_reminders.add(owner_member.id)
             self.bot.loop.create_task(self._send_reminder(
                 user_id=owner_member.id,
                 guild_id=guild.id,

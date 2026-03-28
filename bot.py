@@ -33,7 +33,7 @@ async def on_ready():
 
 async def main():
     async with bot:
-        for ext in ("cogs.channels", "cogs.counter", "cogs.huntbot"):
+        for ext in ("cogs.channels", "cogs.counter", "cogs.huntbot", "cogs.help"):
             try:
                 await bot.load_extension(ext)
                 logger.info(f"Loaded {ext}")

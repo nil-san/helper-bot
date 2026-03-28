@@ -2,7 +2,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import re
+import logging
 from utils import owner_only
+
+logger = logging.getLogger("cogs.channels")
 
 
 async def category_autocomplete(interaction: discord.Interaction, current: str):
@@ -46,7 +49,6 @@ class Channels(commands.Cog):
         count="How many channels to create (leave empty to create just one with the raw name)",
         category="Pick an existing category or type a new name to create one"
     )
-    @app_commands.checks.has_permissions(manage_channels=True)
     async def createchannels(
         self,
         interaction: discord.Interaction,
@@ -73,7 +75,6 @@ class Channels(commands.Cog):
                 channel = await guild.create_text_channel(prefix, category=target_category)
                 embed = discord.Embed(title="✅ Channel Created", color=discord.Color.green())
                 embed.add_field(name="📋 Channel ID", value=str(channel.id), inline=False)
-                embed.set_footer(text=f"Requested by {interaction.user}", icon_url=interaction.user.display_avatar.url)
                 await interaction.followup.send(embed=embed)
                 await interaction.followup.send(build_copyable(interaction.user.id, [channel.id]))
             except discord.Forbidden:
@@ -139,7 +140,6 @@ class Channels(commands.Cog):
     @app_commands.command(name="deletechannels", description="Delete all channels inside a category")
     @app_commands.autocomplete(category=category_autocomplete)
     @app_commands.describe(category="The category whose channels you want to delete")
-    @app_commands.checks.has_permissions(manage_channels=True)
     async def deletechannels(self, interaction: discord.Interaction, category: str):
         await interaction.response.defer()
         guild = interaction.guild
