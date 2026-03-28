@@ -211,14 +211,17 @@ class Huntbot(commands.Cog):
         fire_at = self._pending_reactions.get(payload.message_id)
         if fire_at is None:
             return
-        user = self.bot.get_user(payload.user_id)
-        if user is None:
+        # Reply in the channel, not DM
+        channel = self.bot.get_channel(payload.channel_id)
+        if channel is None:
             return
         try:
-            await user.send(
-                f"⏰ That huntbot returns at <t:{int(fire_at)}:T> (<t:{int(fire_at)}:R>)"
+            msg = await channel.fetch_message(payload.message_id)
+            await msg.reply(
+                f"<@{payload.user_id}> ⏰ Huntbot returns at <t:{int(fire_at)}:T> (<t:{int(fire_at)}:R>)",
+                mention_author=False
             )
-        except discord.Forbidden:
+        except (discord.NotFound, discord.Forbidden):
             pass
 
     # ── on_message ────────────────────────────────────────
