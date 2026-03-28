@@ -2,14 +2,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils import owner_only
-
-logger = logging.getLogger("cogs.counter")
 import json
+import logging
 import os
 import re
-import logging
 import time
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger("cogs.counter")
 
 DATA_FILE  = "counts.json"
 WORDS_FILE   = "words.json"
