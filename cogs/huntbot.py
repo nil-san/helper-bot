@@ -373,10 +373,15 @@ class Huntbot(commands.Cog):
             if user_pref and user_pref.get("muted"):
                 return  # User said don't ask again
 
+            #to fetch command id
+            guild = message.guild
+            command = self.bot.tree.get_command("huntbot", guild=guild)
+            mention = f"</{command.name}:{command.id}>" if command else "/huntbot on"
+
             try:
                 await message.channel.send(
                     f"Hey {owner_member.mention}, would you like to be reminded when your huntbot is back? "
-                    f"Run `/huntbot on` to set it up! "
+                    f"Run {mention} to set it up! "
                     f"\n*(Click the button below if you don't want these prompts)*",
                     view=PromptView(owner_member.id)
                 )
